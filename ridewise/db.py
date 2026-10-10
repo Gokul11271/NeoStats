@@ -334,3 +334,134 @@ def agent_get_operational_summary() -> Dict[str, Any]:
             "kyc_summary": kyc_counts,
             "damage_summary": damage_counts,
         }
+
+
+def agent_get_distinct_customers(count_only: bool = False, limit: int = 100) -> Any:
+    """
+    Support agent lookup of distinct customers or distinct customer count.
+    Excludes sensitive PII (phone, email, license) for privacy.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if count_only:
+            cursor.execute("SELECT COUNT(DISTINCT customer_id) as total_distinct_customers FROM customers")
+            row = cursor.fetchone()
+            return dict(row) if row else {"total_distinct_customers": 0}
+        else:
+            cursor.execute(
+                """
+                SELECT DISTINCT customer_id, full_name, city, kyc_status, customer_tier, created_at
+                FROM customers
+                ORDER BY customer_id
+                LIMIT ?
+                """,
+                (limit,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+
+def agent_get_customers_without_bookings(limit: int = 100) -> List[Dict[str, Any]]:
+    """
+    Support agent lookup of customers who have never placed a booking.
+    Excludes sensitive PII (phone, email, license).
+    """
+    query = """
+        SELECT c.customer_id, c.full_name, c.city, c.kyc_status, c.customer_tier, c.created_at
+        FROM customers c
+        LEFT JOIN bookings b ON c.customer_id = b.customer_id
+        WHERE b.booking_id IS NULL
+        ORDER BY c.customer_id
+        LIMIT ?
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def agent_get_failed_payments(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Support agent lookup of all failed payment transactions across the system.
+    """
+    query = """
+        SELECT p.payment_id, p.booking_id, b.customer_id, p.payment_type, p.amount,
+               p.gst_amount, p.payment_method, p.payment_status, p.paid_at, p.remarks
+        FROM payments p
+        JOIN bookings b ON p.booking_id = b.booking_id
+        WHERE p.payment_status = 'FAILED'
+        ORDER BY p.paid_at DESC
+        LIMIT ?
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_customer_failed_payments(customer_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Customer lookup of failed payments belonging ONLY to the session customer.
+    """
+    query = """
+        SELECT p.payment_id, p.booking_id, p.payment_type, p.amount,
+               p.gst_amount, p.payment_method, p.payment_status, p.paid_at, p.remarks
+        FROM payments p
+        JOIN bookings b ON p.booking_id = b.booking_id
+        WHERE b.customer_id = ? AND p.payment_status = 'FAILED'
+        ORDER BY p.paid_at DESC
+        LIMIT ?
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (customer_id, limit))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def agent_get_damage_reports_for_vehicle(vehicle_query: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Support agent lookup of damage reports for a specific vehicle (by vehicle_id, registration, or model).
+    """
+    clean = vehicle_query.strip()
+    query = """
+        SELECT d.report_id, d.booking_id, d.vehicle_id, d.reported_by,
+               d.damage_category, d.severity, d.description,
+               d.assessed_cost, d.claim_status, d.reported_at,
+               b.customer_id, c.full_name as customer_name,
+               v.model as vehicle_model, v.registration_no, v.hub_name
+        FROM damage_reports d
+        JOIN bookings b ON d.booking_id = b.booking_id
+        JOIN customers c ON b.customer_id = c.customer_id
+        JOIN vehicles v ON d.vehicle_id = v.vehicle_id
+        WHERE d.vehicle_id LIKE ? OR v.registration_no LIKE ? OR v.model LIKE ?
+        ORDER BY d.reported_at DESC
+        LIMIT ?
+    """
+    param = f"%{clean}%"
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (param, param, param, limit))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_customer_damages_for_vehicle(customer_id: str, vehicle_query: str) -> List[Dict[str, Any]]:
+    """
+    Customer lookup of damage reports for a vehicle ONLY if belonging to customer's own bookings.
+    """
+    clean = vehicle_query.strip()
+    query = """
+        SELECT d.report_id, d.booking_id, d.vehicle_id, d.reported_by,
+               d.damage_category, d.severity, d.description,
+               d.assessed_cost, d.claim_status, d.reported_at,
+               v.model as vehicle_model, v.registration_no
+        FROM damage_reports d
+        JOIN bookings b ON d.booking_id = b.booking_id
+        JOIN vehicles v ON d.vehicle_id = v.vehicle_id
+        WHERE b.customer_id = ? AND (d.vehicle_id LIKE ? OR v.registration_no LIKE ? OR v.model LIKE ?)
+        ORDER BY d.reported_at DESC
+    """
+    param = f"%{clean}%"
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (customer_id, param, param, param))
+        return [dict(row) for row in cursor.fetchall()]
+

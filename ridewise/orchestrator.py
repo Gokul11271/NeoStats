@@ -56,6 +56,25 @@ class RideWiseOrchestrator:
                 "is_fallback": False
             }
 
+        q_lower = user_query_clean.lower()
+
+        # Intent detection flags
+        is_distinct_cust_query = any(k in q_lower for k in [
+            "distinct customer", "unique customer", "list customer", "all customer",
+            "show customer", "how many customer", "count of customer", "total customer",
+            "customers in my database", "customers in the database", "customer table"
+        ]) and not any(k in q_lower for k in ["never booked", "no booking", "without booking", "zero booking"])
+
+        is_no_booking_cust_query = any(k in q_lower for k in [
+            "never booked", "no booking", "without booking", "zero booking", "has not booked", "have not booked"
+        ]) and "customer" in q_lower
+
+        is_failed_payment_query = any(k in q_lower for k in [
+            "failed payment", "failed transaction", "unsuccessful payment", "payment failed", "declined payment"
+        ])
+
+        is_damage_query = any(k in q_lower for k in ["damage", "accident", "scratch", "claim"])
+
         if role == "customer":
             if not session_customer_id:
                 return {
@@ -92,6 +111,20 @@ class RideWiseOrchestrator:
                         "is_fallback": False
                     }
 
+            # Check if customer is attempting administrative cross-customer queries
+            if is_distinct_cust_query or is_no_booking_cust_query:
+                return {
+                    "answer": (
+                        f"Access Denied: You are logged in as customer {session_customer_id}. "
+                        f"You are only authorized to view your own profile, bookings, payments, and damage claims. "
+                        f"Global administrative queries regarding all or distinct customers are restricted to Support Agents."
+                    ),
+                    "citations": [],
+                    "evidence": "Cross-customer administrative query blocked by application authorization.",
+                    "calculations": {},
+                    "is_fallback": False
+                }
+
         # -------------------------------------------------------------
         # 2. DATA GATHERING & DETERMINISTIC CALCULATIONS
         # -------------------------------------------------------------
@@ -103,7 +136,7 @@ class RideWiseOrchestrator:
             assert session_customer_id is not None
             profile = db.get_customer_profile(session_customer_id)
             evidence_blocks.append(
-                f"[Customer Profile]\n"
+                f"[Database Evidence - Customer Profile]\n"
                 f"Customer ID: {profile['customer_id']}\n"
                 f"Name: {profile['full_name']}\n"
                 f"Phone: {profile['phone']}\n"
@@ -113,6 +146,36 @@ class RideWiseOrchestrator:
                 f"Customer Tier: {profile['customer_tier']}\n"
             )
 
+            # 1. Customer Failed Payments Query
+            if is_failed_payment_query:
+                cust_failed_p = db.get_customer_failed_payments(session_customer_id)
+                evidence_blocks.append(f"[Database Evidence - Customer Failed Payments ({len(cust_failed_p)} records)]")
+                if cust_failed_p:
+                    for p in cust_failed_p:
+                        evidence_blocks.append(
+                            f"  - Payment ID: {p['payment_id']} | Booking ID: {p['booking_id']} | Type: {p['payment_type']} | "
+                            f"Amount: ₹{p['amount']} (+ ₹{p['gst_amount']} GST) | Method: {p['payment_method']} | "
+                            f"Status: {p['payment_status']} | Paid At: {p['paid_at']} | Remarks: {p['remarks']}"
+                        )
+                else:
+                    evidence_blocks.append("  No failed payments found for your account.")
+
+            # 2. Customer Vehicle Damage Query
+            veh_match = re.search(r"\b(V-\d{4}|V-\d{1,4})\b", user_query_clean, re.IGNORECASE) or re.search(r"vehicle\s+([A-Z0-9_-]+)", user_query_clean, re.IGNORECASE)
+            if is_damage_query and veh_match:
+                v_term = veh_match.group(1).upper()
+                cust_dmg = db.get_customer_damages_for_vehicle(session_customer_id, v_term)
+                evidence_blocks.append(f"[Database Evidence - Customer Damage Reports for Vehicle '{v_term}' ({len(cust_dmg)} records)]")
+                if cust_dmg:
+                    for d in cust_dmg:
+                        evidence_blocks.append(
+                            f"  - Report ID: {d['report_id']} | Booking: {d['booking_id']} | Category: {d['damage_category']} | "
+                            f"Severity: {d['severity']} | Assessed Cost: ₹{d['assessed_cost']} | Status: {d['claim_status']} | "
+                            f"Notes: {d['description']}"
+                        )
+                else:
+                    evidence_blocks.append(f"  No damage reports found for vehicle '{v_term}' under your bookings.")
+
             # Check if specific booking ID was referenced
             booking_match = re.search(r"\b(B-\d{4})\b", user_query_clean, re.IGNORECASE)
             specific_b_id = booking_match.group(1).upper() if booking_match else None
@@ -120,7 +183,7 @@ class RideWiseOrchestrator:
             # Fetch customer bookings
             bookings = db.get_customer_bookings(session_customer_id, booking_id=specific_b_id)
             if bookings:
-                evidence_blocks.append(f"[Customer Bookings ({len(bookings)} found)]")
+                evidence_blocks.append(f"[Database Evidence - Customer Bookings ({len(bookings)} found)]")
                 for b in bookings[:5]:  # Limit to 5 most relevant bookings
                     b_id = b["booking_id"]
                     evidence_blocks.append(
@@ -207,22 +270,87 @@ class RideWiseOrchestrator:
 
         else:
             # SUPPORT AGENT ROLE
-            evidence_blocks.append("[Support Agent Operational Session Active]")
+            evidence_blocks.append("[Database Evidence - Support Agent Operational Session Active]")
 
-            # Check if query references a specific customer or booking
+            # Regex matches
             cust_match = re.search(r"\b(CUST\d{4})\b", user_query_clean, re.IGNORECASE)
             booking_match = re.search(r"\b(B-\d{4})\b", user_query_clean, re.IGNORECASE)
+            vehicle_match = re.search(r"\b(V-\d{1,4}|V\d{1,4}|KA\d{2}[A-Z0-9]+)\b", user_query_clean, re.IGNORECASE)
 
-            if cust_match:
+            # 1. Distinct Customers / Customer Count Query
+            if is_distinct_cust_query:
+                is_count_q = any(k in q_lower for k in ["how many", "count", "number of", "total count"])
+                if is_count_q:
+                    count_res = db.agent_get_distinct_customers(count_only=True)
+                    evidence_blocks.append(
+                        f"[Database Evidence - Distinct Customer Count]\n"
+                        f"Total Distinct Customers in Database: {count_res['total_distinct_customers']}"
+                    )
+                else:
+                    cust_list = db.agent_get_distinct_customers(count_only=False, limit=100)
+                    evidence_blocks.append(f"[Database Evidence - Distinct Customers List ({len(cust_list)} records)]")
+                    evidence_blocks.append("Privacy Notice: Sensitive PII (phone, email, driving license) excluded.")
+                    for c in cust_list:
+                        evidence_blocks.append(
+                            f"- {c['customer_id']}: {c['full_name']} | City: {c['city']} | KYC: {c['kyc_status']} | Tier: {c['customer_tier']} | Joined: {c['created_at']}"
+                        )
+
+            # 2. Customers Who Have Never Booked Query
+            elif is_no_booking_cust_query:
+                no_booking_list = db.agent_get_customers_without_bookings(limit=100)
+                evidence_blocks.append(f"[Database Evidence - Customers Who Have Never Booked ({len(no_booking_list)} records)]")
+                if no_booking_list:
+                    for c in no_booking_list:
+                        evidence_blocks.append(
+                            f"- {c['customer_id']}: {c['full_name']} | City: {c['city']} | KYC: {c['kyc_status']} | Tier: {c['customer_tier']}"
+                        )
+                else:
+                    evidence_blocks.append("All registered customers have placed at least one booking.")
+
+            # 3. Failed Payments Query
+            elif is_failed_payment_query:
+                failed_payments = db.agent_get_failed_payments(limit=50)
+                evidence_blocks.append(f"[Database Evidence - System Failed Payments ({len(failed_payments)} records)]")
+                if failed_payments:
+                    for p in failed_payments:
+                        evidence_blocks.append(
+                            f"- Payment ID: {p['payment_id']} | Booking: {p['booking_id']} | Customer: {p['customer_id']} | "
+                            f"Type: {p['payment_type']} | Amount: ₹{p['amount']} (+ ₹{p['gst_amount']} GST) | "
+                            f"Method: {p['payment_method']} | Status: {p['payment_status']} | Paid At: {p['paid_at']} | Remarks: {p['remarks']}"
+                        )
+                else:
+                    evidence_blocks.append("No failed payment transactions found in database.")
+
+            # 4. Vehicle Damage Reports Query
+            elif is_damage_query or vehicle_match:
+                v_term = vehicle_match.group(1).upper() if vehicle_match else None
+                if v_term:
+                    dmgs = db.agent_get_damage_reports_for_vehicle(v_term, limit=50)
+                    evidence_blocks.append(f"[Database Evidence - Damage Reports for Vehicle '{v_term}' ({len(dmgs)} records)]")
+                else:
+                    dmgs = db.agent_get_damage_reports(limit=50)
+                    evidence_blocks.append(f"[Database Evidence - All Damage Reports ({len(dmgs)} records)]")
+
+                if dmgs:
+                    for d in dmgs:
+                        evidence_blocks.append(
+                            f"- Report: {d['report_id']} | Booking: {d['booking_id']} | Vehicle: {d.get('vehicle_model', d['vehicle_id'])} ({d['vehicle_id']}) | "
+                            f"Category: {d['damage_category']} | Severity: {d['severity']} | Assessed Cost: ₹{d['assessed_cost']} | "
+                            f"Status: {d['claim_status']} | Reported By: {d['reported_by']} | Notes: {d['description']}"
+                        )
+                else:
+                    evidence_blocks.append("No damage reports found matching query criteria.")
+
+            elif cust_match:
                 cid = cust_match.group(1).upper()
                 c_profile = db.agent_get_customer_profile(cid)
                 if c_profile:
                     evidence_blocks.append(
-                        f"[Customer Profile for {cid}]\n"
+                        f"[Database Evidence - Customer Profile for {cid}]\n"
                         f"Name: {c_profile['full_name']} | Phone: {c_profile['phone']} | KYC: {c_profile['kyc_status']} | Tier: {c_profile['customer_tier']}"
                     )
                 c_bookings = db.agent_search_bookings(customer_id=cid, limit=5)
-                evidence_blocks.append(f"[Recent Bookings for {cid}: {len(c_bookings)} records]")
+                evidence_blocks.append(f"[Database Evidence - Recent Bookings for {cid}: {len(c_bookings)} records]")
                 for b in c_bookings:
                     evidence_blocks.append(f"- Booking {b['booking_id']} ({b['model']}, Hub: {b['hub_name']}, Status: {b['booking_status']})")
 
@@ -231,7 +359,7 @@ class RideWiseOrchestrator:
                 b_detail = db.agent_get_booking_details(bid)
                 if b_detail:
                     evidence_blocks.append(
-                        f"[Booking Details for {bid}]\n"
+                        f"[Database Evidence - Booking Details for {bid}]\n"
                         f"Customer: {b_detail['customer_name']} ({b_detail['customer_id']}) | Tier: {b_detail['customer_tier']}\n"
                         f"Vehicle: {b_detail['model']} ({b_detail['vehicle_type']}, Reg: {b_detail['registration_no']}) | Hub: {b_detail['hub_name']}\n"
                         f"Status: {b_detail['booking_status']} | Booked: {b_detail['booked_at']}\n"
@@ -248,12 +376,14 @@ class RideWiseOrchestrator:
                     evidence_blocks.append(f"Damage Reports: {len(damages)}")
                     for d in damages:
                         evidence_blocks.append(f"  - {d['report_id']}: {d['damage_category']} ₹{d['assessed_cost']} Status: {d['claim_status']} Notes: {d['description']}")
+                else:
+                    evidence_blocks.append(f"[Database Evidence - Booking Details for {bid}]\nNo booking found matching ID '{bid}'.")
 
             else:
                 # Operational summary / Fleet lookup
                 summary = db.agent_get_operational_summary()
                 evidence_blocks.append(
-                    f"[Operational Fleet & Hub Summary]\n"
+                    f"[Database Evidence - Operational Fleet & Hub Summary]\n"
                     f"Fleet Status Breakdown: {summary['fleet_summary']}\n"
                     f"Hub Distribution: {summary['hub_distribution']}\n"
                     f"Booking Status Breakdown: {summary['booking_summary']}\n"
@@ -267,7 +397,7 @@ class RideWiseOrchestrator:
         policy_matches = self.policy_store.search_policy(user_query_clean, top_k=4)
         citations = policy_matches
         if policy_matches:
-            evidence_blocks.append("\n[Relevant Policy Rules & Clauses]")
+            evidence_blocks.append("\n[Policy Evidence - Document Rules]")
             evidence_blocks.append(self.policy_store.format_citations_for_evidence(policy_matches))
 
         # Check if query asks for standalone rate calculation (e.g. "How much for 10 hours on Ather 450X?")

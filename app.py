@@ -61,6 +61,23 @@ def get_orchestrator():
     return RideWiseOrchestrator()
 
 
+def should_show_audit_expander(citations, calculations, evidence):
+    if citations or calculations:
+        return True
+    if not evidence:
+        return False
+    # Hide expander for simple greetings where evidence only contains default customer profile header
+    substantive_indicators = [
+        "[Database Evidence - Distinct", "[Database Evidence - Customers",
+        "[Database Evidence - Customer Failed Payments", "[Database Evidence - System Failed Payments",
+        "[Database Evidence - Damage Reports", "[Database Evidence - Customer Bookings",
+        "[Database Evidence - Booking Details", "[Database Evidence - Recent Bookings",
+        "[Database Evidence - Operational Fleet", "[Policy Evidence",
+        "Booking ID:", "Payment ID:", "Vehicle ID:", "Cross-customer"
+    ]
+    return any(indicator in evidence for indicator in substantive_indicators)
+
+
 orchestrator = get_orchestrator()
 
 # Initialize Session State
@@ -178,7 +195,7 @@ for msg in st.session_state.messages:
             evidence = msg.get("evidence", "")
             calculations = msg.get("calculations", {})
 
-            if citations or calculations or evidence:
+            if should_show_audit_expander(citations, calculations, evidence):
                 with st.expander("🔍 View Policy Citations & Audit Evidence"):
                     if citations:
                         st.markdown("#### 📄 Document Sources & Citations")
@@ -228,7 +245,7 @@ if user_prompt:
             st.markdown(res["answer"])
 
             # Render Citations & Audit expander
-            if res.get("citations") or res.get("calculations") or res.get("evidence"):
+            if should_show_audit_expander(res.get("citations"), res.get("calculations"), res.get("evidence")):
                 with st.expander("🔍 View Policy Citations & Audit Evidence"):
                     if res.get("citations"):
                         st.markdown("#### 📄 Document Sources & Citations")

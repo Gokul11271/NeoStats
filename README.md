@@ -32,6 +32,7 @@ The core design philosophy is **Deterministic Security & Zero-Hallucination Math
 │  • Regex-scans query for foreign CUSTXXXX IDs → immediate deny         │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
+                                    
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        Orchestrator Pipeline                           │
