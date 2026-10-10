@@ -162,31 +162,43 @@ def test_rag_07_negative_out_of_scope_query():
     """
     Test 7: Unrelated policy question (e.g. pets, helicopters) produces verifiable honesty.
 
-    Strengthened assertions:
-    - Uses a deterministic mock LLM to verify the ORCHESTRATOR passes the right evidence,
-      which contains no matching policy content for helicopters/pets.
-    - With a no-relevant-chunks scenario, the system prompt commands the LLM to say
-      the info is not available; the test verifies the answer is not fabricated.
-    - Uses a mock LLM that returns a realistic "not found" response to prove the
-      orchestrator's evidence did NOT contain matching policy passages.
+    Strengthened assertions (v2):
+    - Uses a deterministic mock LLM that inspects ONLY the <untrusted_evidence> block
+      (retrieved policy chunks), NOT the full user-message text, so that the user
+      query word "helicopter" itself does not trigger a false-positive.
+    - Verifies no helicopter or pet policy passages exist in the policy store citations.
+    - Verifies the mock LLM returns an honest 'not found' message (no hallucination).
     """
+    import re as _re
     from ridewise.llm_client import RideWiseLLMClient
-    from unittest.mock import patch
 
     class _HonestyMockLLM(RideWiseLLMClient):
-        """Simulates what the LLM should say when no matching evidence is found."""
+        """
+        Inspects only the <untrusted_evidence>…</untrusted_evidence> block to decide
+        whether the policy store erroneously retrieved helicopter/pet content.
+        The user query text is intentionally excluded from the scope of the check.
+        """
         def generate_response(self, messages, temperature=0.1):
-            # Inspect the evidence passed to the LLM
             user_msg = messages[-1]["content"] if messages else ""
-            # If no policy evidence about helicopters/pets was found, model should say so
-            if "helicopter" not in user_msg.lower() and "pet" not in user_msg.lower():
-                return (
-                    "I'm sorry, I could not find any information about helicopter rentals "
-                    "or pet travel policies in the RideWise policy documents. "
-                    "Please contact support at support@ridewise.example or +91 80 4000 1234."
-                )
-            # Unexpected: evidence DID include helicopter or pet info - flag this
-            return "[TEST FAILURE: LLM received helicopter/pet policy evidence unexpectedly]"
+            # Extract only the evidence block (strips the user query line)
+            evidence_match = _re.search(
+                r"<untrusted_evidence>(.*?)</untrusted_evidence>",
+                user_msg,
+                _re.DOTALL
+            )
+            evidence_text = evidence_match.group(1).lower() if evidence_match else ""
+            # The user query is NOT in the evidence block, only DB records & policy chunks
+            if "helicopter" in evidence_text or (
+                "pet" in evidence_text and "petrol" not in evidence_text
+            ):
+                # Policy store hallucinated or retrieved irrelevant passage
+                return "[TEST FAILURE: Policy store returned helicopter/pet content unexpectedly]"
+            # Correct behaviour: no relevant policy found, return an honest message
+            return (
+                "I'm sorry, I could not find any information about helicopter rentals "
+                "or pet travel policies in the RideWise policy documents. "
+                "Please contact support at support@ridewise.example or +91 80 4000 1234."
+            )
 
     orch = RideWiseOrchestrator(llm_client=_HonestyMockLLM())
     res = orch.process_query(
@@ -197,8 +209,7 @@ def test_rag_07_negative_out_of_scope_query():
     assert res is not None
     assert len(res["answer"]) > 0
 
-    # The answer must NOT be an empty string or a fabricated policy
-    # It must signal that the information is not available
+    # The answer must signal honesty rather than return a hallucinated policy rule
     answer_lower = res["answer"].lower()
     honesty_signals = [
         "not find", "not found", "not available", "cannot find", "no information",
@@ -211,7 +222,7 @@ def test_rag_07_negative_out_of_scope_query():
         f"Answer was: {res['answer'][:300]}"
     )
 
-    # Verify no helicopter or pet policy passages were retrieved from the policy store
+    # Verify no helicopter or pet passages were retrieved from the policy store
     policy_content = " ".join([c["content"] for c in res["citations"]]).lower()
     assert "helicopter" not in policy_content, (
         "Policy store must not retrieve helicopter rental passages - they do not exist."

@@ -16,6 +16,8 @@ The core design philosophy is **Deterministic Security & Zero-Hallucination Math
 
 ## 🏗️ Architecture & System Design
 
+### High-Level Flow (ASCII)
+
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        Streamlit Web Interface                         │
@@ -27,6 +29,7 @@ The core design philosophy is **Deterministic Security & Zero-Hallucination Math
 │               Security & RBAC Enforcement (Python Layer)               │
 │  • Enforces session_customer_id on all customer queries                │
 │  • Blocks cross-customer access before database or LLM invocation      │
+│  • Regex-scans query for foreign CUSTXXXX IDs → immediate deny         │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
@@ -43,16 +46,95 @@ The core design philosophy is **Deterministic Security & Zero-Hallucination Math
                                          ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │            Prompt Injection Defense (<untrusted_evidence>)             │
-│  • Encapsulates DB text & policies in inert XML blocks                 │
+│  • All DB text & policy chunks boxed in inert XML sandbox tags         │
 │  • System prompts explicitly command LLM to ignore injected overrides  │
+│  • Adversarial DB remarks retrieved as data, not as instructions       │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│             NeoStats-Hosted LLM Client (gpt-oss-120b)                  │
+│             NeoStats-Hosted LLM Client (Neo-Hackathon model)           │
 │  • Exponential backoff retry (Tenacity)                                │
 │  • Timeout protection & deterministic fallback mode                    │
+│  • Temperature 0.1 for minimal creative drift                          │
 └────────────────────────────────────────────────────────────────────────┘
+```
+
+### Detailed Component Architecture (Mermaid)
+
+```mermaid
+flowchart TD
+    USER["👤 User (Browser)"]
+    UI["🖥️ Streamlit UI\napp.py\n• Role selector: Customer / Support Agent\n• Customer ID input + validation\n• New Conversation button\n• Expandable citations & calculation logs"]
+
+    RBAC["🔒 Security & RBAC\norchestrator.py\n• session_customer_id enforcement\n• Cross-customer ID regex block\n• Role validation"]
+
+    ORCH["⚙️ Orchestrator Pipeline\norchestrator.py\n• Evidence assembly\n• Calculations dispatch\n• Policy retrieval\n• Prompt construction"]
+
+    DB["🗄️ Read-Only DB Engine\ndb.py\n• SQLite URI mode=ro\n• Parameterized SQL (no injection)\n• Customer-scoped queries\n• Agent operational queries"]
+
+    POLICY["📚 Policy Store (RAG)\npolicies.py\n• 5 policy PDFs indexed\n• Verified OCR annexures\n• Synonym expansion map\n• BM25-style scored retrieval\n• Source + page + section citations"]
+
+    MATH["🔢 Math Engine\ncalculations.py\n• Rental charge (hourly + daily cap)\n• Cancellation refund (v1/v2 cutoff)\n• Late return penalty (tier grace)\n• EV low battery fee (<10%)\n• Damage liability\n• 18% GST on all charges"]
+
+    SANDBOX["🛡️ Prompt Sandbox\norchestrator.py\n• Wraps evidence in XML tags\n• System prompt injection defence\n• Inert data treatment enforcement"]
+
+    LLM["🤖 NeoStats LLM Client\nllm_client.py\n• OpenAI-compatible API\n• Tenacity retry (exp. backoff)\n• Timeout guard\n• Deterministic fallback on failure"]
+
+    RIDEWISE_DB[("📦 ridewise.db\nSQLite\n• customers\n• vehicles\n• hubs\n• bookings\n• payments\n• damage_reports")]
+
+    PDF_DOCS[("📄 Policy PDFs\n01 Rental Agreement\n02 Refund Policy v1\n03 Refund Policy v2\n04 Penalty Schedule\n05 EV User Guide")]
+
+    USER --> UI
+    UI --> RBAC
+    RBAC -->|"Allowed"| ORCH
+    RBAC -->|"Denied"| UI
+
+    ORCH --> DB
+    ORCH --> POLICY
+    ORCH --> MATH
+
+    DB <--> RIDEWISE_DB
+    POLICY <--> PDF_DOCS
+
+    MATH --> ORCH
+    DB --> ORCH
+    POLICY --> ORCH
+
+    ORCH --> SANDBOX
+    SANDBOX --> LLM
+    LLM -->|"Answer"| ORCH
+    ORCH -->|"Response dict"| UI
+```
+
+### Module Responsibilities
+
+| Module | File | Responsibility |
+|:---|:---|:---|
+| **Streamlit UI** | `app.py` | Role selection, Customer ID gate, chat history, expandable policy citations, calculation audit display, New Conversation reset |
+| **Orchestrator** | `ridewise/orchestrator.py` | Query routing, RBAC enforcement, evidence assembly, prompt construction, graceful LLM fallback |
+| **DB Engine** | `ridewise/db.py` | Read-only SQLite access via URI `?mode=ro`, parameterized queries, customer-scoped data isolation, agent-wide queries |
+| **Policy Store** | `ridewise/policies.py` | PDF ingestion, verified OCR transcriptions for scanned annexures, synonym expansion, scored chunk retrieval, provenance citations |
+| **Math Engine** | `ridewise/calculations.py` | Deterministic rental charges (daily cap), v1/v2 refund slabs, GOLD grace period late fees, EV battery penalty, damage liability, 18% GST |
+| **LLM Client** | `ridewise/llm_client.py` | NeoStats API integration, exponential retry, defensive system prompts, temperature control |
+| **Config** | `ridewise/config.py` | `.env` loading, path resolution for DB and policy PDFs |
+
+### Data Flow: Customer Query
+
+```
+1. Customer enters query → UI validates Customer ID → Orchestrator called
+2. Orchestrator → Python RBAC check (no DB/LLM yet)
+3. Orchestrator → DB (read-only, customer-scoped)
+   ↓ Returns: profile, bookings, payments, damages
+4. Orchestrator → Math Engine (for each booking)
+   ↓ Returns: refund slabs, late fees, EV penalties
+5. Orchestrator → Policy Store (synonym-expanded query)
+   ↓ Returns: top-4 ranked chunks with doc_id, version, page, section
+6. Orchestrator → Assembles evidence block
+   → Wraps in <untrusted_evidence> sandbox
+   → Builds messages[] with system + history + evidence + user query
+7. LLM Client → NeoStats API → Structured natural language answer
+8. UI → Renders answer + expandable citations + calculation breakdown
 ```
 
 ---
