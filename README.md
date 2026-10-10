@@ -190,13 +190,17 @@ git clone https://github.com/Gokul11271/NeoStats.git
 cd NeoStats
 ```
 
-### 2. Set Up Virtual Environment & Dependencies
+### 1. One-Click Setup & Launch (<5 Minutes)
+On Windows, simply double-click or run:
+```cmd
+run.bat
+```
+`run.bat` automatically verifies Python, installs requirements, and launches the application at `http://localhost:8501`.
+
+### 2. Manual Setup
 ```bash
 python -m venv venv
-# On Windows PowerShell:
-.\venv\Scripts\Activate.ps1
-# On Linux / macOS:
-# source venv/bin/activate
+.\venv\Scripts\activate
 
 pip install -r requirements.txt
 ```
@@ -215,14 +219,14 @@ RIDEWISE_DB_PATH=Requirements/ridewise.db
 DOCS_DIR=Requirements
 ```
 
-### 4. Run Automated Smoke Tests (36 / 36 Passed)
+### 4. Run Automated Smoke Tests (66 / 66 Passed)
 ```bash
-python -m pytest -v tests/
+python -m pytest -v
 ```
 
 ### 5. Launch the Streamlit Conversational Web Application
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 Open your browser at `http://localhost:8501`.
 
@@ -243,19 +247,20 @@ Open your browser at `http://localhost:8501`.
 
 ---
 
-## 🧪 Test Suite Summary (36 Automated Tests)
+## 🧪 Test Suite Summary (66 Automated Tests - 100% Passing)
 
 Run the complete test suite with:
 ```bash
-pytest -v tests/
+python -m pytest -v
 ```
 
+- `tests/test_database_qa_and_rbac.py` (30 tests): Complete Customer and Support Agent evaluation scenarios: distinct customer list/count, zero bookings, booking lookup, failed & pending payments, financial summary without double-counting, top-10 damaged vehicles, open/disputed claims, actual vehicle rates from DB, missing return timestamps, policy boundaries, and multilingual support.
 - `tests/test_db_rbac.py` (6 tests): Read-only SQLite enforcement, customer profile lookup, cross-customer booking/payment/damage isolation, and agent queries.
 - `tests/test_calculations.py` (8 tests): Rental formulas, security deposits, v1 vs v2 cancellation slabs, late fees, GOLD tier grace period, EV low battery, damage liability, and GST.
 - `tests/test_policy_retrieval.py` (7 tests): PDF ingestion, scanned Annexure 1 (v2 refund), scanned Annexure A (tier grace period), citations, **synonym source-doc verification** (`late fee` → RW-POL-04, `low battery` → RW-POL-05, `deposit` → RW-POL-01).
 - `tests/test_prompt_injection.py` (5 tests): Customer ID cross-query blocking, unauthenticated session rejection, **adversarial DB remark injection** (remark containing `ADMIN OVERRIDE` is retrieved into evidence but treated as inert data — session and permissions unchanged), and untrusted evidence wrapping.
 - `tests/test_orchestrator_and_api.py` (3 tests): End-to-end customer and agent workflows, plus graceful fallback when API fails.
-- `tests/test_rag_errors_and_negatives.py` (7 tests): Strengthened synonym retrieval (top-1 doc verified + % present), version boundary on booking date, Gold tier 31-min exception, exact 10% EV battery threshold, citation provenance, **strengthened prompt injection** (CUST0001 scope unchanged post-override, answer sanity check), and **strengthened out-of-scope honesty** (mock LLM + honesty signal assertion + policy store confirmed no helicopter/pet passages).
+- `tests/test_rag_errors_and_negatives.py` (7 tests): Strengthened synonym retrieval (top-1 doc verified + % present), version boundary on booking date, Gold tier 31-min exception, exact 10% EV battery threshold, citation provenance, **strengthened prompt injection**, and **strengthened out-of-scope honesty**.
 
 ---
 
@@ -263,12 +268,13 @@ pytest -v tests/
 
 ```
 NeoStats/
+├── run.bat                                 # One-click Windows setup & launcher (<5 mins)
 ├── .env.example                            # Environment variable template
 ├── .gitignore                              # Git ignore rules (secrets, cache, venv)
 ├── requirements.txt                        # Project dependencies
 ├── README.md                               # Complete architectural and setup guide
 ├── DECISIONS.md                            # Hackathon design decisions and evaluations
-├── app.py                                  # Streamlit conversational web interface
+├── app.py                                  # Streamlit conversational web interface (with multilingual support)
 ├── ridewise/                               # Core application package
 │   ├── __init__.py
 │   ├── config.py                           # Environment configuration & path resolution
@@ -277,7 +283,8 @@ NeoStats/
 │   ├── calculations.py                     # Deterministic financial & policy math engine
 │   ├── llm_client.py                       # NeoStats LLM client with retry & guardrails
 │   └── orchestrator.py                     # Query routing, evidence packing, synthesis & fallback
-├── tests/                                  # Automated Pytest suite (32 tests)
+├── tests/                                  # Automated Pytest suite (66 tests)
+│   ├── test_database_qa_and_rbac.py        # Complete Phase 9 Customer & Agent tests
 │   ├── test_db_rbac.py
 │   ├── test_calculations.py
 │   ├── test_policy_retrieval.py
