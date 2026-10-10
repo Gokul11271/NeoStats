@@ -59,6 +59,48 @@ class RideWiseOrchestrator:
 
         q_lower = user_query_clean.lower()
 
+        # -------------------------------------------------------------
+        # Conversational / Greeting Intent Detection
+        # -------------------------------------------------------------
+        GREETING_PATTERNS = [
+            "hi", "hii", "hiii", "hello", "hey", "heyy", "greetings",
+            "good morning", "good afternoon", "good evening", "good night",
+            "thanks", "thank you", "thanks a lot", "thanks so much", "thank you so much",
+            "thx", "ty", "bye", "goodbye", "how are you", "who are you",
+            "what can you do", "help me", "ok", "okay", "cool", "great", "welcome"
+        ]
+
+        GREETING_WORDS = {
+            "hi", "hii", "hiii", "hello", "hey", "heyy", "greetings",
+            "good", "morning", "afternoon", "evening", "night",
+            "thanks", "thank", "you", "thx", "ty", "bye", "goodbye",
+            "there", "awesome", "great", "ok", "okay", "cool", "help",
+            "assistant", "bot", "ridewise", "team", "support",
+            "so", "much", "very", "lot", "a", "for", "your", "kind", "many"
+        }
+
+        DOMAIN_KEYWORDS = [
+            "booking", "bookings", "payment", "payments", "vehicle", "vehicles",
+            "scooter", "scooters", "bike", "bikes", "rental", "rentals", "rent",
+            "cancel", "cancellation", "refund", "refunds", "late", "penalty", "penalties",
+            "battery", "ev", "damage", "damages", "claim", "claims", "deposit", "deposits",
+            "policy", "policies", "terms", "rule", "rules", "fee", "fees", "cost", "costs",
+            "price", "prices", "rate", "rates", "charge", "charges", "hub", "hubs",
+            "fleet", "customer", "customers", "distinct", "summary", "failed", "pending",
+            "missing", "upcoming", "how many", "count", "total", "list", "show", "summarize",
+            "breakdown", "calculate", "hours", "hrs", "rupees", "inr"
+        ]
+
+        clean_q = re.sub(r"[^\w\s]", "", q_lower).strip()
+        has_domain_keyword = any(kw in q_lower for kw in DOMAIN_KEYWORDS)
+        has_id_pattern = bool(re.search(r"\b(CUST\d+|B-\d+|VEH\d+|V-\d+|KA\d+)\b", user_query_clean, re.IGNORECASE))
+        q_tokens = set(clean_q.split())
+
+        is_conversational = False
+        if not has_domain_keyword and not has_id_pattern:
+            if clean_q in GREETING_PATTERNS or (q_tokens and q_tokens.issubset(GREETING_WORDS)):
+                is_conversational = True
+
         # Intent detection flags
         is_distinct_cust_query = any(k in q_lower for k in [
             "distinct customer", "unique customer", "list customer", "all customer",
@@ -149,6 +191,48 @@ class RideWiseOrchestrator:
                     "calculations": {},
                     "is_fallback": False
                 }
+
+        # Handle Conversational / Greeting intent directly without retrieval
+        if is_conversational:
+            system_prompt = (
+                SYSTEM_PROMPT_CUSTOMER.format(customer_id=session_customer_id or "UNKNOWN")
+                if role == "customer"
+                else SYSTEM_PROMPT_AGENT
+            )
+            messages = [{"role": "system", "content": system_prompt}]
+            for h in conversation_history[-4:]:
+                messages.append({"role": h["role"], "content": h["content"]})
+
+            lang_instruction = ""
+            if language and language.lower() != "english":
+                lang_instruction = f" Please reply in {language}."
+
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"User Message: {user_query_clean}\n\n"
+                    f"Instructions:\n"
+                    f"1. Respond politely and helpfully to the user's greeting or pleasantry.\n"
+                    f"2. Do not state or fabricate operational data, bookings, or policy details.\n"
+                    f"3. Briefly ask how you can assist with RideWise two-wheeler & EV rentals."
+                    f"{lang_instruction}"
+                )
+            })
+
+            try:
+                llm_response = self.llm_client.generate_response(messages)
+            except Exception:
+                llm_response = "Hello! How can I assist you with your RideWise rental today?"
+
+            return {
+                "answer": llm_response,
+                "citations": [],
+                "evidence": "",
+                "calculations": {},
+                "is_fallback": False,
+                "intent": "conversational",
+                "retrieval_performed": False
+            }
 
         # -------------------------------------------------------------
         # 2. DATA GATHERING & DETERMINISTIC CALCULATIONS
@@ -591,6 +675,9 @@ class RideWiseOrchestrator:
         )
         messages.append({"role": "user", "content": current_user_content})
 
+        # Determine query intent for non-conversational queries
+        intent = "policy" if any(k in q_lower for k in ["policy", "cancel", "refund", "late", "penalty", "battery", "deposit", "rule", "terms", "grace"]) else "database_query"
+
         # -------------------------------------------------------------
         # 5. LLM SYNTHESIS & GRACEFUL FALLBACK
         # -------------------------------------------------------------
@@ -601,7 +688,9 @@ class RideWiseOrchestrator:
                 "citations": citations,
                 "evidence": full_evidence_text,
                 "calculations": calculations,
-                "is_fallback": False
+                "is_fallback": False,
+                "intent": intent,
+                "retrieval_performed": True
             }
         except Exception as e:
             # Fallback response generated deterministically if LLM times out or rate limits
@@ -616,5 +705,7 @@ class RideWiseOrchestrator:
                 "evidence": full_evidence_text,
                 "calculations": calculations,
                 "is_fallback": True,
+                "intent": intent,
+                "retrieval_performed": True,
                 "error": str(e)
             }
