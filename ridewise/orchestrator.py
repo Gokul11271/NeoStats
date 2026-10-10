@@ -46,6 +46,16 @@ class RideWiseOrchestrator:
         # -------------------------------------------------------------
         # 1. SECURITY & RBAC ENFORCEMENT (Python Layer)
         # -------------------------------------------------------------
+        ALLOWED_ROLES = {"customer", "agent", "support agent"}
+        if role not in ALLOWED_ROLES:
+            return {
+                "answer": f"Error: Invalid role '{role}'. Allowed roles are 'Customer' and 'Support Agent'.",
+                "citations": [],
+                "evidence": "",
+                "calculations": {},
+                "is_fallback": False
+            }
+
         if role == "customer":
             if not session_customer_id:
                 return {

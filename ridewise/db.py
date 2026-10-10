@@ -44,6 +44,28 @@ def get_customer_profile(customer_id: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
+def lookup_vehicle_rates(model_query: str) -> Optional[Dict[str, Any]]:
+    """
+    Resolves model rates and specifications directly from the vehicles table.
+    """
+    if not model_query or len(model_query.strip()) < 2:
+        return None
+
+    clean = model_query.strip()
+    query = """
+        SELECT DISTINCT model, vehicle_type, hourly_rate, daily_rate, battery_capacity_kwh
+        FROM vehicles
+        WHERE model LIKE ? OR vehicle_type LIKE ?
+        LIMIT 1
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (f"%{clean}%", f"%{clean}%"))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+
 def get_customer_bookings(customer_id: str, booking_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Retrieves bookings belonging ONLY to the specified customer_id.

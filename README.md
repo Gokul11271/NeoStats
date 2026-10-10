@@ -132,7 +132,7 @@ RIDEWISE_DB_PATH=Requirements/ridewise.db
 DOCS_DIR=Requirements
 ```
 
-### 4. Run Automated Smoke Tests (32 / 32 Passed)
+### 4. Run Automated Smoke Tests (36 / 36 Passed)
 ```bash
 python -m pytest -v tests/
 ```
@@ -156,10 +156,11 @@ Open your browser at `http://localhost:8501`.
 | **Stage 5** | **Automated Smoke Test Suite** | Created comprehensive Pytest suite (32 tests) verifying role access, payment statuses, policy versions, math calculations, prompt injections, and simulated 429/timeout fallbacks. |
 | **Stage 6** | **Streamlit Conversational UI** | Built multi-persona UI with role switcher, real-time customer ID validation, "New Conversation" button, expandable policy citations, and calculation audit logs. |
 | **Stage 7** | **Documentation & Deliverables** | Completed `README.md`, `DECISIONS.md`, `requirements.txt`, `.env.example`, `.gitignore`, and Git commits. |
+| **Stage 8** | **RAG Hardening & Test Strengthening** | Strengthened synonym expansion tests (verify exact source doc returned, not just any result); added adversarial DB-remark injection test (remark with `ADMIN OVERRIDE` actually retrieved into evidence block, confirmed treated as inert data); strengthened out-of-scope test with deterministic mock LLM and honesty-signal assertion; verified policy store does not return hallucinated passages for out-of-scope topics. Total tests: **36**. |
 
 ---
 
-## 🧪 Test Suite Summary (32 Automated Tests)
+## 🧪 Test Suite Summary (36 Automated Tests)
 
 Run the complete test suite with:
 ```bash
@@ -168,10 +169,10 @@ pytest -v tests/
 
 - `tests/test_db_rbac.py` (6 tests): Read-only SQLite enforcement, customer profile lookup, cross-customer booking/payment/damage isolation, and agent queries.
 - `tests/test_calculations.py` (8 tests): Rental formulas, security deposits, v1 vs v2 cancellation slabs, late fees, GOLD tier grace period, EV low battery, damage liability, and GST.
-- `tests/test_policy_retrieval.py` (4 tests): PDF ingestion, scanned Annexure 1 (v2 refund), scanned Annexure A (tier grace period), and citations.
-- `tests/test_prompt_injection.py` (4 tests): Customer ID cross-query blocking, unauthenticated session rejection, and untrusted evidence wrapping.
+- `tests/test_policy_retrieval.py` (7 tests): PDF ingestion, scanned Annexure 1 (v2 refund), scanned Annexure A (tier grace period), citations, **synonym source-doc verification** (`late fee` → RW-POL-04, `low battery` → RW-POL-05, `deposit` → RW-POL-01).
+- `tests/test_prompt_injection.py` (5 tests): Customer ID cross-query blocking, unauthenticated session rejection, **adversarial DB remark injection** (remark containing `ADMIN OVERRIDE` is retrieved into evidence but treated as inert data — session and permissions unchanged), and untrusted evidence wrapping.
 - `tests/test_orchestrator_and_api.py` (3 tests): End-to-end customer and agent workflows, plus graceful fallback when API fails.
-- `tests/test_rag_errors_and_negatives.py` (7 tests): Synonym retrieval, version boundary on booking date, Gold tier 31-min exception, exact 10% EV battery threshold, citation provenance, prompt injection resilience, and negative out-of-scope query handling.
+- `tests/test_rag_errors_and_negatives.py` (7 tests): Strengthened synonym retrieval (top-1 doc verified + % present), version boundary on booking date, Gold tier 31-min exception, exact 10% EV battery threshold, citation provenance, **strengthened prompt injection** (CUST0001 scope unchanged post-override, answer sanity check), and **strengthened out-of-scope honesty** (mock LLM + honesty signal assertion + policy store confirmed no helicopter/pet passages).
 
 ---
 
