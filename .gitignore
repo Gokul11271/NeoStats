@@ -44,4 +44,4 @@ ENV/
 htmlcov/
 
 # Streamlit
-.streamlit/
+.streamlit/secrets.toml
