@@ -1,0 +1,194 @@
+# RideWise Assist 🛵
+### Intelligent AI Operations & Customer Support Assistant
+*Built for the NeoStats AI Engineer Hackathon*
+
+---
+
+## 📌 Executive Summary
+
+**RideWise Assist** is a production-grade, conversational AI system designed for **RideWise Mobility Pvt. Ltd.** (Bengaluru, India). It empowers two distinct user personas:
+1. **Customers**: Access their personal bookings, verify refund calculations, check damage claim statuses, understand rental terms, and inquire about vehicle policies.
+2. **Support Agents & Operations**: Search cross-hub bookings, analyze fleet status, view damage reports, inspect operational metrics, and review company policies.
+
+The core design philosophy is **Deterministic Security & Zero-Hallucination Math**: probabilistic LLMs are used exclusively for natural language reasoning and explanation, while all tenant isolation, database access, and financial calculations (rental caps, cancellation refund slabs, late fees, EV low-battery penalties, GST) are hard-enforced in pure Python.
+
+---
+
+## 🏗️ Architecture & System Design
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Streamlit Web Interface                         │
+│  [Role: Customer / Support Agent]   [Customer ID]   [New Chat Reset]  │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│               Security & RBAC Enforcement (Python Layer)               │
+│  • Enforces session_customer_id on all customer queries                │
+│  • Blocks cross-customer access before database or LLM invocation      │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Orchestrator Pipeline                           │
+├──────────────────────────┬─────────────────────────┬───────────────────┤
+│ 1. Read-Only DB Engine   │ 2. Policy Store (OCR)   │ 3. Math Engine    │
+│  • SQLite URI: mode=ro   │  • 5 Indexed Policy PDFs│  • Rental 24h cap │
+│  • Parameterized queries │  • Verified Scanned OCR │  • v1/v2 Refunds  │
+│  • Customer isolation    │  • Provenance citations │  • Tier Grace Late│
+│  • Payment status filter │  • Applicability checks │  • EV <10% Fee    │
+└──────────────────────────┴─────────────┬───────────┴───────────────────┘
+                                         │
+                                         ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│            Prompt Injection Defense (<untrusted_evidence>)             │
+│  • Encapsulates DB text & policies in inert XML blocks                 │
+│  • System prompts explicitly command LLM to ignore injected overrides  │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│             NeoStats-Hosted LLM Client (gpt-oss-120b)                  │
+│  • Exponential backoff retry (Tenacity)                                │
+│  • Timeout protection & deterministic fallback mode                    │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔒 Security & Guardrail Highlights
+
+1. **Strict Customer Data Isolation:**
+   - Customer sessions strictly bind `session_customer_id`.
+   - All customer database lookups use parameterized SQL queries (`WHERE customer_id = ?`).
+   - Cross-customer access attempts (e.g. asking for another `CUSTXXXX` ID) are intercepted and rejected in application Python code *before* any query executes.
+2. **Read-Only Database Access:**
+   - The SQLite database is opened using URI mode `file:ridewise.db?mode=ro`. Any modification attempt raises a runtime error.
+3. **Prompt Injection Protection:**
+   - Customer remarks (`payments.remarks`) and damage descriptions (`damage_reports.description`) are treated as untrusted data.
+   - All retrieved evidence is boxed within `<untrusted_evidence>` tags with defensive system prompt rules.
+4. **Deterministic Financial Math:**
+   - Zero LLM arithmetic. Slabs, hourly rates, daily caps, and 18% GST calculations are computed in `ridewise/calculations.py`.
+5. **Policy Versioning Precision:**
+   - Version 1 (RW-POL-02) vs Version 2 (RW-POL-03) cutoff is evaluated strictly on `booked_at` timestamp:
+     - **v1**: Bookings made before `2026-07-01 00:00 IST` (`2026-06-30 18:30:00 UTC`).
+     - **v2**: Bookings made on or after `2026-07-01 00:00 IST` (`2026-06-30 18:30:00 UTC`).
+   - Annexure 1 (scanned schedule) in v2 and Annexure A (scanned tier benefits) in Penalty Schedule are indexed from verified OCR transcriptions with full metadata.
+
+---
+
+## 🚀 Quickstart & Installation Guide (Under 5 Minutes)
+
+### Prerequisites
+- Python 3.10+ (tested on Python 3.13)
+- SQLite3
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/Gokul11271/NeoStats.git
+cd NeoStats
+```
+
+### 2. Set Up Virtual Environment & Dependencies
+```bash
+python -m venv venv
+# On Windows PowerShell:
+.\venv\Scripts\Activate.ps1
+# On Linux / macOS:
+# source venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+### 3. Configure Environment Variables
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
+Ensure `.env` contains your authorized NeoStats credentials:
+```ini
+NEOSTATS_OPENAI_BASE_URL=https://neo-hackathon.services.ai.azure.com/openai/v1/
+NEOSTATS_OPENAI_API_KEY=your_authorized_api_key_here
+NEOSTATS_OPENAI_MODEL=Neo-Hackathon
+RIDEWISE_DB_PATH=Requirements/ridewise.db
+DOCS_DIR=Requirements
+```
+
+### 4. Run Automated Smoke Tests
+```bash
+python -m pytest tests/
+```
+*(All 25 tests should pass across RBAC, calculations, policy retrieval, prompt injection, and API resilience).*
+
+### 5. Launch the Streamlit Web Application
+```bash
+streamlit run app.py
+```
+Open your browser at `http://localhost:8501`.
+
+---
+
+## 📋 AIDLC Stage-by-Stage Implementation Log
+
+| Stage | Focus Area | What Was Done |
+| :--- | :--- | :--- |
+| **Stage 1** | **Foundation, Config & DB RBAC** | Configured `.env` management, read-only SQLite URI connector, parameterized queries for customers and support agents, and customer tenant isolation tests. |
+| **Stage 2** | **Policy Knowledge Base & OCR** | Ingested all 5 PDF policies (`RW-POL-01` to `RW-POL-05`), transcribed scanned Annexure 1 (v2 refund table) and Annexure A (tier benefits), and created metadata-preserving chunk search. |
+| **Stage 3** | **Deterministic Financial Engine** | Implemented pure Python pricing calculators: rental charges with daily cap, cancellation refunds (v1/v2 cutoff), late return penalties (GOLD tier grace period), EV low battery (<10%), damage liability, and 18% GST. |
+| **Stage 4** | **Safe Orchestrator & LLM Integration** | Built query router, untrusted evidence encapsulation (`<untrusted_evidence>`), defensive system prompts, retry handling (`tenacity`), and deterministic fallback responses on API errors. |
+| **Stage 5** | **Automated Smoke Test Suite** | Created comprehensive Pytest suite (25 tests) verifying role access, payment statuses, policy versions, math calculations, prompt injections, and simulated 429/timeout fallbacks. |
+| **Stage 6** | **Streamlit Conversational UI** | Built multi-persona UI with role switcher, real-time customer ID validation, "New Conversation" button, expandable policy citations, and calculation audit logs. |
+| **Stage 7** | **Documentation & Deliverables** | Completed `README.md`, `DECISIONS.md`, `requirements.txt`, `.env.example`, `.gitignore`, and Git commits. |
+
+---
+
+## 🧪 Test Suite Summary
+
+Run the complete test suite with:
+```bash
+pytest -v tests/
+```
+
+- `tests/test_db_rbac.py`: 6 tests verifying read-only SQLite mode, customer profile access, cross-customer booking/payment/damage isolation, and agent search.
+- `tests/test_calculations.py`: 8 tests verifying rental formulas, security deposits, v1 vs v2 cancellation slabs, late fees, GOLD tier grace period, EV low battery, damage liability, and GST.
+- `tests/test_policy_retrieval.py`: 4 tests verifying PDF ingestion, scanned Annexure 1 (v2 refund), scanned Annexure A (tier grace period), and citations.
+- `tests/test_prompt_injection.py`: 4 tests verifying customer ID cross-query blocking, unauthenticated session rejection, and untrusted evidence wrapping.
+- `tests/test_orchestrator_and_api.py`: 3 tests verifying end-to-end customer and agent workflows, plus graceful fallback when API fails.
+
+---
+
+## 🏛️ Project Directory Structure
+
+```
+NeoStats/
+├── .env.example                # Environment variable template
+├── .gitignore                  # Git ignore rules (secrets, cache, venv)
+├── requirements.txt            # Project dependencies
+├── README.md                   # Complete architectural and setup guide
+├── DECISIONS.md                # Hackathon design decisions and evaluations
+├── app.py                      # Streamlit conversational web interface
+├── ridewise/                   # Core application package
+│   ├── __init__.py
+│   ├── config.py               # Environment configuration & path resolution
+│   ├── db.py                   # Read-only SQLite connector with strict RBAC
+│   ├── policies.py             # Policy document store, OCR annexures, citations
+│   ├── calculations.py         # Deterministic financial & policy math engine
+│   ├── llm_client.py           # NeoStats LLM client with retry & guardrails
+│   └── orchestrator.py         # Query routing, evidence packing, synthesis & fallback
+├── tests/                      # Automated Pytest suite (25 tests)
+│   ├── test_db_rbac.py
+│   ├── test_calculations.py
+│   ├── test_policy_retrieval.py
+│   ├── test_prompt_injection.py
+│   └── test_orchestrator_and_api.py
+└── Requirements/               # Supplied hackathon data pack
+    ├── 01_Rental_Agreement_and_Terms.pdf
+    ├── 02_Cancellation_and_Refund_Policy_v1.pdf
+    ├── 03_Cancellation_and_Refund_Policy_v2.pdf
+    ├── 04_Late_Return_and_Damage_Penalty_Schedule.pdf
+    ├── 05_EV_User_Guide_and_FAQ.pdf
+    ├── data_dictionary.md
+    ├── ridewise.db
+    └── sample_open_ai_wrapper.py
+```
