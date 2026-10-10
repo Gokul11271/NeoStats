@@ -23,6 +23,43 @@ from ridewise.llm_client import (
 )
 
 
+def extract_city_from_query(query: str) -> Optional[str]:
+    """
+    Extracts targeted city/location name from customer count queries.
+    Supports known city aliases and preposition patterns.
+    """
+    q_lower = query.lower()
+
+    # Priority check for known cities and aliases
+    CANDIDATE_CITIES = [
+        "bangalore", "bengaluru", "blr",
+        "chennai", "madras", "maa",
+        "hyderabad", "hyd",
+        "mangaluru", "mangalore", "ixe",
+        "mysuru", "mysore", "myq",
+        "pune", "pnq",
+        "mumbai", "delhi", "kolkata", "ahmedabad", "jaipur", "surat", "lucknow", "kanpur",
+        "nagpur", "indore", "thane", "bhopal", "visakhapatnam", "patna", "vadodara", "ghaziabad",
+        "ludhiana", "agra", "nashik", "faridabad", "meerut", "rajkot", "varanasi", "srinagar",
+        "aurangabad", "dhanbad", "amritsar", "navi mumbai", "allahabad", "ranchi", "howrah",
+        "coimbatore", "jabalpur", "gwalior", "vijayawada", "jodhpur", "madurai", "raipur",
+        "kota", "chandigarh", "guwahati", "solapur", "hubballi", "dharwad", "belagavi",
+        "paris", "london", "tokyo"
+    ]
+    for city in CANDIDATE_CITIES:
+        if re.search(rf"\b{re.escape(city)}\b", q_lower):
+            return city
+
+    # Fallback: check for preposition + word (e.g., "in Paris", "from Goa")
+    prep_match = re.search(r"\b(?:in|from|at|around|located in|based in)\s+([a-zA-Z\s]+?)(?:\?|\.|\,|$|\b(?:how|what|show|who|where)\b)", q_lower)
+    if prep_match:
+        cand = prep_match.group(1).strip()
+        if cand and cand not in {"the", "our", "my", "this", "total", "database", "table", "all", "each", "every", "a", "an", "system", "fleet"}:
+            return cand
+
+    return None
+
+
 class RideWiseOrchestrator:
     def __init__(self, llm_client: Optional[RideWiseLLMClient] = None):
         self.llm_client = llm_client or RideWiseLLMClient()
@@ -100,6 +137,11 @@ class RideWiseOrchestrator:
         if not has_domain_keyword and not has_id_pattern:
             if clean_q in GREETING_PATTERNS or (q_tokens and q_tokens.issubset(GREETING_WORDS)):
                 is_conversational = True
+
+        target_city = extract_city_from_query(user_query_clean)
+        is_location_cust_query = bool(target_city and any(k in q_lower for k in [
+            "customer", "customers", "user", "users", "people", "count", "how many", "number of", "registered"
+        ]))
 
         # Intent detection flags
         is_distinct_cust_query = any(k in q_lower for k in [
@@ -179,7 +221,7 @@ class RideWiseOrchestrator:
                     }
 
             # Check if customer is attempting administrative cross-customer queries
-            if is_distinct_cust_query or is_no_booking_cust_query or is_financial_summary_query:
+            if (is_distinct_cust_query and not is_location_cust_query) or is_no_booking_cust_query or is_financial_summary_query:
                 return {
                     "answer": (
                         f"Access Denied: You are logged in as customer {session_customer_id}. "
@@ -254,6 +296,22 @@ class RideWiseOrchestrator:
                 f"KYC Status: {profile['kyc_status']}\n"
                 f"Customer Tier: {profile['customer_tier']}\n"
             )
+
+            # 0. Location-Based Customer Count Query (if asked in customer mode)
+            if is_location_cust_query and target_city:
+                loc_res = db.agent_get_customer_count_by_city(target_city)
+                breakdown_str = ", ".join(f"{k}: {v}" for k, v in loc_res["db_breakdown"].items()) or "None"
+                evidence_blocks.append(
+                    f"[Database Evidence - Location-Based Customer Count Query]\n"
+                    f"Target Location / City: '{loc_res['city_query']}'\n"
+                    f"Normalized Aliases Searched: {loc_res['matched_aliases']}\n"
+                    f"Executed SQL Query: {loc_res['sql_query']}\n"
+                    f"Distinct Customers Found: {loc_res['customer_count']}\n"
+                    f"Database City Breakdown: {breakdown_str}\n"
+                    f"Data Source Rule: Derived strictly from registered customer records in the 'customers' table using LOWER(TRIM(city)). "
+                    f"Never infer customer location from company operating hubs or fleet locations. "
+                    f"{'Database contains verified records for this location.' if loc_res['customer_count'] > 0 else 'No registered customer records found for this location in the database.'}"
+                )
 
             # 1. Customer Upcoming Bookings
             if is_upcoming_booking_query:
@@ -403,8 +461,24 @@ class RideWiseOrchestrator:
             booking_match = re.search(r"\b(B-\d{4})\b", user_query_clean, re.IGNORECASE)
             vehicle_match = re.search(r"\b(VEH\d{3}|VEH\d{1,4}|V-\d{1,4}|KA\d{2}[A-Z0-9]+)\b", user_query_clean, re.IGNORECASE)
 
+            # 0. Location-Based Customer Count Query (Checked before generic distinct customers)
+            if is_location_cust_query and target_city:
+                loc_res = db.agent_get_customer_count_by_city(target_city)
+                breakdown_str = ", ".join(f"{k}: {v}" for k, v in loc_res["db_breakdown"].items()) or "None"
+                evidence_blocks.append(
+                    f"[Database Evidence - Location-Based Customer Count Query]\n"
+                    f"Target Location / City: '{loc_res['city_query']}'\n"
+                    f"Normalized Aliases Searched: {loc_res['matched_aliases']}\n"
+                    f"Executed SQL Query: {loc_res['sql_query']}\n"
+                    f"Distinct Customers Found: {loc_res['customer_count']}\n"
+                    f"Database City Breakdown: {breakdown_str}\n"
+                    f"Data Source Rule: Derived strictly from registered customer records in the 'customers' table using LOWER(TRIM(city)). "
+                    f"Never infer customer location from company operating hubs or fleet locations. "
+                    f"{'Database contains verified records for this location.' if loc_res['customer_count'] > 0 else 'No registered customer records found for this location in the database.'}"
+                )
+
             # 1. Financial / Payment Summary
-            if is_financial_summary_query:
+            elif is_financial_summary_query:
                 fin_summary = db.agent_get_payment_financial_summary()
                 evidence_blocks.append("[Database Evidence - Financial & Payment Summary (No Double-Counting)]")
                 evidence_blocks.append("Summary of successful payments, refunds, and penalties strictly grouped by payment type:")
@@ -670,7 +744,8 @@ class RideWiseOrchestrator:
             f"3. When referencing policy rules, cite Document Title, Doc ID, Version, and Page.\n"
             f"4. Present financial figures and breakdowns clearly with ₹ (INR), showing base charge, 18% GST, and total.\n"
             f"5. If a requested Customer ID, Booking ID, or Vehicle ID does not exist in the evidence, state clearly that no such record was found.\n"
-            f"6. If the user asks an irrelevant question outside RideWise mobility/rentals, politely explain that you assist with RideWise rentals and decline to fabricate unrelated facts."
+            f"6. For location-based customer questions (e.g. 'How many customers in Bangalore?'), report the exact distinct count from the SQL query in the evidence. Never assume all customers reside in Bengaluru or infer customer location from hub locations. If 0 customers are found, clearly state that no customers are registered in that location.\n"
+            f"7. If the user asks an irrelevant question outside RideWise mobility/rentals, politely explain that you assist with RideWise rentals and decline to fabricate unrelated facts."
             f"{lang_instruction}"
         )
         messages.append({"role": "user", "content": current_user_content})

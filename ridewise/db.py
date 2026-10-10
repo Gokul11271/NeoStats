@@ -360,6 +360,77 @@ def agent_get_distinct_customers(count_only: bool = False, limit: int = 100) -> 
             return [dict(row) for row in cursor.fetchall()]
 
 
+# City Aliases dictionary based on database inspection:
+# Actual DB values: BLR (29), Bangalore (39), Bengaluru (79), bangalore  (17), Chennai (8), Hyderabad (12), Mangaluru (8), Mysuru (6), Pune (2)
+CITY_ALIASES: Dict[str, List[str]] = {
+    "bangalore": ["bangalore", "bengaluru", "blr"],
+    "bengaluru": ["bangalore", "bengaluru", "blr"],
+    "blr": ["bangalore", "bengaluru", "blr"],
+    "chennai": ["chennai", "madras", "maa"],
+    "madras": ["chennai", "madras", "maa"],
+    "hyderabad": ["hyderabad", "hyd"],
+    "mangaluru": ["mangaluru", "mangalore", "ixe"],
+    "mangalore": ["mangaluru", "mangalore", "ixe"],
+    "mysuru": ["mysuru", "mysore", "myq"],
+    "mysore": ["mysuru", "mysore", "myq"],
+    "pune": ["pune", "pnq"],
+}
+
+
+def agent_get_customer_count_by_city(city_query: str) -> Dict[str, Any]:
+    """
+    Counts distinct customers whose registered city matches the requested location.
+    Normalizes city names using LOWER(TRIM(city)) and supports known city aliases.
+    Strictly queries the customers table - never infers city from company rental hubs.
+    """
+    if not city_query or not city_query.strip():
+        return {
+            "city_query": "",
+            "normalized_input": "",
+            "matched_aliases": [],
+            "customer_count": 0,
+            "db_breakdown": {},
+            "sql_query": "N/A",
+            "message": "No location specified in query."
+        }
+
+    clean_city = city_query.strip().lower()
+    aliases = CITY_ALIASES.get(clean_city, [clean_city])
+    placeholders = ",".join("?" for _ in aliases)
+
+    sql_query = f"""
+        SELECT COUNT(DISTINCT customer_id) as customer_count
+        FROM customers
+        WHERE LOWER(TRIM(city)) IN ({placeholders})
+    """
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql_query, tuple(aliases))
+        row = cursor.fetchone()
+        count = row["customer_count"] if row else 0
+
+        # Retrieve database representation breakdown for the searched aliases
+        breakdown_query = f"""
+            SELECT city, COUNT(DISTINCT customer_id) as cnt
+            FROM customers
+            WHERE LOWER(TRIM(city)) IN ({placeholders})
+            GROUP BY city
+        """
+        cursor.execute(breakdown_query, tuple(aliases))
+        breakdown = {r["city"]: r["cnt"] for r in cursor.fetchall()}
+
+        return {
+            "city_query": city_query.strip(),
+            "normalized_input": clean_city,
+            "matched_aliases": aliases,
+            "customer_count": count,
+            "db_breakdown": breakdown,
+            "sql_query": f"SELECT COUNT(DISTINCT customer_id) FROM customers WHERE LOWER(TRIM(city)) IN ({', '.join(repr(a) for a in aliases)});",
+            "message": f"Found {count} distinct customer(s) registered in {city_query.strip()}."
+        }
+
+
 def agent_get_customers_without_bookings(limit: int = 100) -> List[Dict[str, Any]]:
     """
     Support agent lookup of customers who have never placed a booking.
