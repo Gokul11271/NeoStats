@@ -69,11 +69,14 @@ def should_show_audit_expander(citations, calculations, evidence):
     # Hide expander for simple greetings where evidence only contains default customer profile header
     substantive_indicators = [
         "[Database Evidence - Distinct", "[Database Evidence - Customers",
-        "[Database Evidence - Customer Failed Payments", "[Database Evidence - System Failed Payments",
+        "[Database Evidence - Customer Failed", "[Database Evidence - System Failed",
+        "[Database Evidence - Failed", "[Database Evidence - Top",
+        "[Database Evidence - Open", "[Database Evidence - Completed",
+        "[Database Evidence - Customer Upcoming", "[Database Evidence - Actual Vehicle",
         "[Database Evidence - Damage Reports", "[Database Evidence - Customer Bookings",
         "[Database Evidence - Booking Details", "[Database Evidence - Recent Bookings",
-        "[Database Evidence - Operational Fleet", "[Policy Evidence",
-        "Booking ID:", "Payment ID:", "Vehicle ID:", "Cross-customer"
+        "[Database Evidence - Operational Fleet", "[Database Evidence - Financial",
+        "[Policy Evidence", "Booking ID:", "Payment ID:", "Vehicle ID:", "Cross-customer"
     ]
     return any(indicator in evidence for indicator in substantive_indicators)
 
@@ -156,7 +159,18 @@ with st.sidebar:
 
     st.divider()
 
-    # 3. New Conversation Button
+    # 3. Language Selector (Multilingual Chatbot Support)
+    st.subheader("🌐 Language / भाषा")
+    selected_language = st.selectbox(
+        "Choose Chatbot Language:",
+        options=["English", "Hindi (हिंदी)", "Kannada (ಕನ್ನಡ)", "Tamil (தமிழ்)", "Telugu (తెలుగు)"],
+        index=0,
+        help="Select language for conversational response."
+    )
+
+    st.divider()
+
+    # 4. New Conversation Button
     if st.button("🔄 Start New Conversation", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
@@ -239,7 +253,8 @@ if user_prompt:
                 role=st.session_state.role.lower(),
                 user_query=user_prompt,
                 session_customer_id=st.session_state.customer_id if st.session_state.role == "Customer" else None,
-                conversation_history=history_tuples
+                conversation_history=history_tuples,
+                language=selected_language
             )
 
             st.markdown(res["answer"])

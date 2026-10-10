@@ -465,3 +465,127 @@ def get_customer_damages_for_vehicle(customer_id: str, vehicle_query: str) -> Li
         cursor.execute(query, (customer_id, param, param, param))
         return [dict(row) for row in cursor.fetchall()]
 
+
+def agent_get_failed_and_pending_payments(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Support agent lookup of failed and pending payment transactions across the system.
+    """
+    query = """
+        SELECT p.payment_id, p.booking_id, b.customer_id, p.payment_type, p.amount,
+               p.gst_amount, p.payment_method, p.payment_status, p.paid_at, p.remarks
+        FROM payments p
+        JOIN bookings b ON p.booking_id = b.booking_id
+        WHERE p.payment_status IN ('FAILED', 'PENDING')
+        ORDER BY p.paid_at DESC
+        LIMIT ?
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def agent_get_payment_financial_summary() -> Dict[str, Any]:
+    """
+    Summarize successful payments, refunds, and penalties without double-counting.
+    Groups strictly by payment_type where payment_status = 'SUCCESS'.
+    """
+    query = """
+        SELECT payment_type, COUNT(*) as count, SUM(amount) as total_amount, SUM(gst_amount) as total_gst
+        FROM payments
+        WHERE payment_status = 'SUCCESS'
+        GROUP BY payment_type
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        summary = {}
+        for r in rows:
+            ptype = r["payment_type"]
+            summary[ptype] = {
+                "count": r["count"],
+                "total_amount": round(r["total_amount"] or 0.0, 2),
+                "total_gst": round(r["total_gst"] or 0.0, 2),
+                "net_total": round((r["total_amount"] or 0.0) + (r["total_gst"] or 0.0), 2)
+            }
+        return summary
+
+
+def agent_get_top_damaged_vehicles(limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Returns the vehicles with the most damage reports and total assessed damage cost.
+    """
+    query = """
+        SELECT v.vehicle_id, v.model, v.registration_no, v.hub_name,
+               COUNT(d.report_id) as damage_count,
+               SUM(d.assessed_cost) as total_assessed_cost
+        FROM damage_reports d
+        JOIN vehicles v ON d.vehicle_id = v.vehicle_id
+        GROUP BY v.vehicle_id, v.model, v.registration_no, v.hub_name
+        ORDER BY damage_count DESC, total_assessed_cost DESC
+        LIMIT ?
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def agent_get_open_and_disputed_damages(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Returns damage reports with claim_status in ('OPEN', 'DISPUTED').
+    """
+    query = """
+        SELECT d.report_id, d.booking_id, d.vehicle_id, d.reported_by,
+               d.damage_category, d.severity, d.description,
+               d.assessed_cost, d.claim_status, d.reported_at,
+               v.model as vehicle_model, v.registration_no, v.hub_name
+        FROM damage_reports d
+        JOIN vehicles v ON d.vehicle_id = v.vehicle_id
+        WHERE d.claim_status IN ('OPEN', 'DISPUTED')
+        ORDER BY d.reported_at DESC
+        LIMIT ?
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def agent_get_completed_bookings_missing_return() -> List[Dict[str, Any]]:
+    """
+    Identifies completed bookings ('CMP') that are missing an actual return timestamp.
+    """
+    query = """
+        SELECT b.booking_id, b.customer_id, b.vehicle_id, b.scheduled_start,
+               b.scheduled_end, b.actual_return_at, b.booking_status
+        FROM bookings b
+        WHERE b.booking_status = 'CMP' AND (b.actual_return_at IS NULL OR b.actual_return_at = '')
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_customer_upcoming_bookings(customer_id: str) -> List[Dict[str, Any]]:
+    """
+    Retrieves upcoming bookings ('UPC') belonging to the customer.
+    """
+    query = """
+        SELECT b.booking_id, b.customer_id, b.vehicle_id, b.booked_at,
+               b.scheduled_start, b.scheduled_end, b.booking_status,
+               v.registration_no, v.vehicle_type, v.model, v.hub_name,
+               v.hourly_rate, v.daily_rate
+        FROM bookings b
+        JOIN vehicles v ON b.vehicle_id = v.vehicle_id
+        WHERE b.customer_id = ? AND b.booking_status = 'UPC'
+        ORDER BY b.scheduled_start ASC
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, (customer_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
