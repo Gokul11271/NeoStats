@@ -194,6 +194,7 @@ cd NeoStats
 On Windows, simply double-click or run:
 ```cmd
 run.bat
+
 ```
 `run.bat` automatically verifies Python, installs requirements, and launches the application at `http://localhost:8501`.
 
