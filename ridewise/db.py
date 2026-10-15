@@ -3,7 +3,7 @@ Database Access Module for RideWise Assist
 Strict read-only SQLite connector with deterministic, role-based parameterized query functions.
 """
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from ridewise.config import RIDEWISE_DB_PATH
 
 
@@ -336,7 +336,7 @@ def agent_get_operational_summary() -> Dict[str, Any]:
         }
 
 
-def agent_get_distinct_customers(count_only: bool = False, limit: int = 100) -> Any:
+def agent_get_distinct_customers(count_only: bool = False, limit: int = 100) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
     """
     Support agent lookup of distinct customers or distinct customer count.
     Excludes sensitive PII (phone, email, license) for privacy.

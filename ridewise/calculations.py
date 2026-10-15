@@ -12,15 +12,18 @@ GST_RATE = 0.18
 
 
 def parse_utc_timestamp(ts: Optional[str]) -> Optional[datetime]:
-    """Parses ISO timestamp string (YYYY-MM-DD HH:MM:SS) into a naive UTC datetime."""
+    """Parses ISO timestamp string (YYYY-MM-DD HH:MM:SS) into a naive UTC datetime.
+    Returns None for empty, missing, or malformed timestamps."""
     if not ts:
         return None
     # Support both space and T separator
     clean_ts = ts.replace("T", " ").strip()
-    try:
-        return datetime.strptime(clean_ts, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return datetime.strptime(clean_ts, "%Y-%m-%d")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(clean_ts, fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def calculate_rental_charge(
@@ -45,7 +48,7 @@ def calculate_rental_charge(
 
     day_cost = days * daily_rate
     rem_cost = min(rem_hours * hourly_rate, daily_rate)
-    base_charge = day_cost + rem_cost
+    base_charge = round(day_cost + rem_cost, 2)
     gst = round(base_charge * GST_RATE, 2)
     total = round(base_charge + gst, 2)
 
@@ -116,6 +119,9 @@ def calculate_cancellation_refund(
     is_ridewise_cancelled: bool = False,
     is_no_show: bool = False
 ) -> Dict[str, Any]:
+    # NOTE: paid_rental_amount must be the base amount EXCLUSIVE of GST.
+    # If paid_gst_amount is 0 or negative, GST is auto-calculated as 18% of paid_rental_amount.
+    # Callers must never pass a GST-inclusive amount as paid_rental_amount.
     """
     Calculates cancellation refund adhering to versioning and policy schedules:
     - RideWise Cancelled: 100% refund.
@@ -273,7 +279,9 @@ def calculate_late_return_penalty(
             "reason": f"Returned {late_minutes:.1f}m late within GOLD tier 30-minute grace period. No late fee."
         }
 
-    # Billed hours: each hour or part of hour counts as 1 full hour
+    # Per Annexure A: when GOLD exceeds 30-min grace, the FULL lateness
+    # is charged from minute 1 (grace does NOT reduce billable minutes).
+    # Billed hours: each hour or part of hour counts as 1 full hour.
     hours_charged = math.ceil(late_minutes / 60.0)
     rate_per_late_hour = round(1.5 * hourly_rate, 2)
     base_penalty = round(hours_charged * rate_per_late_hour, 2)

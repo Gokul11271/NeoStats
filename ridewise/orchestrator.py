@@ -680,6 +680,10 @@ class RideWiseOrchestrator:
             # Default to first fleet model in database if none specified
             if not resolved_vehicle:
                 resolved_vehicle = db.lookup_vehicle_rates("Ather 450X")
+                # Flag that we defaulted so the evidence labels it clearly
+                is_default_vehicle = True
+            else:
+                is_default_vehicle = False
 
             if resolved_vehicle:
                 h_rate = float(resolved_vehicle["hourly_rate"])
@@ -687,8 +691,13 @@ class RideWiseOrchestrator:
                 v_model = resolved_vehicle.get("model", "Vehicle")
                 calc_res = calculate_rental_charge(hrs, h_rate, d_rate)
                 calculations[f"rental_calc_{v_model}"] = calc_res
+                default_note = (
+                    " (NOTE: No specific vehicle model was mentioned in the query. "
+                    "Showing default model rates. Actual rates vary by vehicle.)"
+                    if is_default_vehicle else ""
+                )
                 evidence_blocks.append(
-                    f"[Database Evidence - Actual Vehicle Rate Calculation for {v_model} ({hrs} hours)]\n"
+                    f"[Database Evidence - Actual Vehicle Rate Calculation for {v_model} ({hrs} hours)]{default_note}\n"
                     f"Model: {v_model} | DB Hourly Rate: ₹{h_rate} | DB Daily Rate: ₹{d_rate}\n"
                     f"Calculation Breakdown: {calc_res['formula']}\n"
                     f"Base Rental Amount: ₹{calc_res['base_rental_charge']} | 18% GST: ₹{calc_res['gst_amount']} | Total: ₹{calc_res['total_amount']}"
@@ -754,7 +763,7 @@ class RideWiseOrchestrator:
         intent = "policy" if any(k in q_lower for k in ["policy", "cancel", "refund", "late", "penalty", "battery", "deposit", "rule", "terms", "grace"]) else "database_query"
 
         # -------------------------------------------------------------
-        # 5. LLM SYNTHESIS & GRACEFUL FALLBACK
+        # 6. LLM SYNTHESIS & GRACEFUL FALLBACK
         # -------------------------------------------------------------
         try:
             llm_response = self.llm_client.generate_response(messages)

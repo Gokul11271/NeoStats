@@ -2,7 +2,7 @@
 LLM Client Integration with Defensive Guardrails and Retry Handling
 """
 from typing import Any, Dict, List, Optional
-from openai import OpenAI
+from openai import OpenAI, APITimeoutError, RateLimitError, APIConnectionError, InternalServerError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from ridewise.config import (
     NEOSTATS_OPENAI_BASE_URL,
@@ -63,7 +63,7 @@ class RideWiseLLMClient:
         reraise=True,
         stop=stop_after_attempt(LLM_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=6),
-        retry=retry_if_exception_type(Exception)
+        retry=retry_if_exception_type((APITimeoutError, RateLimitError, APIConnectionError, InternalServerError))
     )
     def generate_response(
         self,
