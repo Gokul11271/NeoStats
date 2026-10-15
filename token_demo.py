@@ -4,9 +4,9 @@ import tiktoken
 encoding = tiktoken.get_encoding("cl100k_base")
 
 sentences = [
-    "I love Python",
+    "I I i",
     "I love machine learning",
-    "Generative AI is powerful!"
+    "Generative AI AI is powerful!"
 ]
 
 for sentence in sentences:
